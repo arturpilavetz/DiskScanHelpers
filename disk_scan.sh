@@ -61,7 +61,13 @@ human() {
 TMP=$(mktemp)
 RAW_TMP=$(mktemp)
 ERR_TMP=$(mktemp)
-cleanup() { rm -f "$TMP" "$RAW_TMP" "$ERR_TMP"; }
+DU_PID=""
+cleanup() {
+  if [ -n "$DU_PID" ] && kill -0 "$DU_PID" 2>/dev/null; then
+    kill "$DU_PID" 2>/dev/null || true
+  fi
+  rm -f "$TMP" "$RAW_TMP" "$ERR_TMP"
+}
 trap cleanup EXIT
 
 DU_COMMAND=(du)
@@ -72,14 +78,57 @@ if [ "$WHOLE_DRIVE" -eq 1 ] && [ "$EUID" -ne 0 ] && [ "${DISK_SCAN_NO_PROMPT:-0}
   read -r -p "   Scan with administrator privileges? [Y/n] " answer
   case "$answer" in
     [nN]|[nN][oO]) ;;
-    *) DU_COMMAND=(sudo du) ;;
+    *)
+      if sudo -v; then
+        DU_COMMAND=(sudo du)
+      else
+        echo "   Administrator authentication failed." >&2
+        exit 1
+      fi
+      ;;
   esac
 fi
 
 if [ "$WHOLE_DRIVE" -eq 1 ]; then
-  "${DU_COMMAND[@]}" -x "$TARGET" > "$RAW_TMP" 2> "$ERR_TMP"
+  "${DU_COMMAND[@]}" -x "$TARGET" > "$RAW_TMP" 2> "$ERR_TMP" &
 else
-  "${DU_COMMAND[@]}" -d "$DEPTH" -x "$TARGET" > "$RAW_TMP" 2> "$ERR_TMP"
+  "${DU_COMMAND[@]}" -d "$DEPTH" -x "$TARGET" > "$RAW_TMP" 2> "$ERR_TMP" &
+fi
+DU_PID=$!
+
+if [ -t 1 ]; then
+  SPINNER=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+  FRAME=0
+  FOLDER_COUNT=0
+  SCAN_STARTED=$SECONDS
+  while kill -0 "$DU_PID" 2>/dev/null; do
+    if [ $(( FRAME % 8 )) -eq 0 ]; then
+      FOLDER_COUNT=$(wc -l < "$RAW_TMP" | tr -d ' ')
+    fi
+    ELAPSED=$(( SECONDS - SCAN_STARTED ))
+    printf '\r\033[K   %s Scanning... %02d:%02d elapsed · %s folders discovered' \
+      "${SPINNER[$(( FRAME % ${#SPINNER[@]} ))]}" \
+      $(( ELAPSED / 60 )) $(( ELAPSED % 60 )) "$FOLDER_COUNT"
+    FRAME=$(( FRAME + 1 ))
+    sleep 0.25
+  done
+fi
+
+wait "$DU_PID"
+DU_STATUS=$?
+DU_PID=""
+
+if [ -t 1 ]; then
+  FOLDER_COUNT=$(wc -l < "$RAW_TMP" | tr -d ' ')
+  ELAPSED=$(( SECONDS - SCAN_STARTED ))
+  printf '\r\033[K   ✓ Scan complete · %02d:%02d elapsed · %s folders discovered\n' \
+    $(( ELAPSED / 60 )) $(( ELAPSED % 60 )) "$FOLDER_COUNT"
+fi
+
+if [ "$DU_STATUS" -ne 0 ] && [ ! -s "$RAW_TMP" ]; then
+  echo "Error: disk scan failed." >&2
+  sed -n '1,3p' "$ERR_TMP" >&2
+  exit "$DU_STATUS"
 fi
 sort -rn "$RAW_TMP" > "$TMP"
 
