@@ -77,6 +77,8 @@
   .kpi:nth-child(1) { background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%); }
   .kpi:nth-child(2) { background: linear-gradient(135deg, #34d399 0%, #10b981 100%); }
   .kpi:nth-child(3) { background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%); }
+  .kpi:nth-child(4) { background: linear-gradient(135deg, #a78bfa 0%, #8b5cf6 100%); }
+  .kpi:nth-child(5) { background: linear-gradient(135deg, #fb7185 0%, #f43f5e 100%); }
   .kpi-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.85; font-weight: 500; }
   .kpi-val { font-size: 18px; font-weight: 700; }
   .kpi-sub { font-size: 9px; opacity: 0.7; }
@@ -101,6 +103,11 @@
   .stacked-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
   .stacked-legend-size { font-weight: 700; color: var(--accent); font-size: 14px; }
   .stacked-legend-pct { color: var(--muted); font-size: 13px; font-weight: 400; }
+  .scan-warning {
+    padding: 9px 12px; border-radius: 8px; border: 1px solid #fcd34d;
+    background: #fffbeb; color: #92400e; font-size: 11px;
+  }
+  .scan-warning.system { border-color: #bfdbfe; background: #eff6ff; color: #1e40af; }
 
   /* -- CHART CARD -- */
   .chart-card {
@@ -124,6 +131,17 @@
   #breadcrumb span { cursor: pointer; color: var(--accent); font-weight: 500; }
   #breadcrumb span:hover { text-decoration: underline; }
   #breadcrumb .sep { color: var(--border); }
+  .finder-btn {
+    border: 1px solid var(--border); background: var(--surface); color: var(--text2);
+    border-radius: 7px; padding: 5px 10px; font: 500 11px/1.2 inherit;
+    cursor: pointer; white-space: nowrap; transition: all 0.15s;
+  }
+  .finder-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: #eff6ff; }
+  .finder-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  #current-path {
+    max-width: min(44vw, 560px); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; color: var(--muted); font: 400 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
   .chart-body {
     flex: 1; position: relative; display: flex; align-items: center; justify-content: center;
     padding: 20px;
@@ -242,6 +260,13 @@
     max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     color: var(--text2); font-weight: 500;
   }
+  .name-cell-inner { display: flex; align-items: center; min-width: 0; }
+  .name-cell-label { overflow: hidden; text-overflow: ellipsis; }
+  .reveal-row-btn {
+    margin-left: auto; padding: 1px 5px; border: 0; border-radius: 5px;
+    background: transparent; color: var(--muted); cursor: pointer; flex-shrink: 0;
+  }
+  .reveal-row-btn:hover { color: var(--accent); background: #eff6ff; }
   .dot {
     display: inline-block; width: 8px; height: 8px; border-radius: 50%;
     margin-right: 7px; flex-shrink: 0;
@@ -271,6 +296,14 @@
   #tooltip .tt-name { font-weight: 700; color: var(--text); margin-bottom: 3px; word-break: break-all; }
   #tooltip .tt-path { color: var(--muted); font-size: 11px; word-break: break-all; margin-bottom: 4px; }
   #tooltip .tt-size { color: var(--accent); font-weight: 600; }
+  #toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 12px);
+    padding: 9px 14px; border-radius: 8px; background: #0f172a; color: #fff;
+    font-size: 12px; box-shadow: var(--shadow-lg); opacity: 0; pointer-events: none;
+    transition: all 0.18s; z-index: 200;
+  }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+  #toast.error { background: #991b1b; }
 
   /* -- SPINNER OVERLAY -- */
   #processing-overlay {
@@ -318,6 +351,7 @@
   <div class="tt-path"></div>
   <div class="tt-size"></div>
 </div>
+<div id="toast" role="status" aria-live="polite"></div>
 
 <header>
   <div>
@@ -331,7 +365,11 @@
     <div class="summary-card" id="summary-card"></div>
     <div class="chart-card">
       <div class="chart-head">
-        <div id="breadcrumb"></div>
+        <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+          <div id="breadcrumb"></div>
+          <button id="reveal-current" class="finder-btn" onclick="openInFinder(currentRoot, event)">Open in Finder</button>
+          <div id="current-path"></div>
+        </div>
         <div style="display:flex;align-items:center;gap:12px;">
           <div class="chart-head-title" id="view-label">Sunburst View</div>
           <div class="view-toggle">
@@ -395,6 +433,66 @@ function fmt(b) {
   if (b >= 1e6)  return (b/1e6).toFixed(1)  + ' MB';
   if (b >= 1e3)  return (b/1e3).toFixed(0)  + ' KB';
   return b + ' B';
+}
+
+var viewerToken = new URLSearchParams(window.location.search).get('token');
+var toastTimer = null;
+
+function viewerAvailable() {
+  return window.location.protocol === 'http:' && window.location.hostname === '127.0.0.1' && !!viewerToken;
+}
+
+function absolutePath(node) {
+  var root = (RAW.target || '').replace(/\/$/, '');
+  var relative = node && node.rel ? node.rel : '/';
+  return relative === '/' ? (root || '/') : root + '/' + relative.replace(/^\//, '');
+}
+
+function updateCurrentPath(node) {
+  var path = absolutePath(node);
+  var label = document.getElementById('current-path');
+  if (label) {
+    label.textContent = path;
+    label.title = path;
+  }
+}
+
+function showToast(message, isError) {
+  var toast = document.getElementById('toast');
+  toast.textContent = message;
+  toast.className = isError ? 'show error' : 'show';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function() { toast.className = ''; }, 2600);
+}
+
+async function openInFinder(node, event) {
+  if (event) event.stopPropagation();
+  if (!node) return;
+  if (!viewerAvailable()) {
+    showToast('Run the scan again to enable Finder integration.', true);
+    return;
+  }
+  try {
+    var response = await fetch('/api/open?token=' + encodeURIComponent(viewerToken), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: node.rel || '/' })
+    });
+    var result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(result.error || 'Could not open folder');
+    showToast('Opened ' + (node.name || node.rel) + ' in Finder.', false);
+  } catch (error) {
+    showToast(error.message || 'Could not open folder.', true);
+  }
+}
+
+function updateFinderButton() {
+  var button = document.getElementById('reveal-current');
+  if (!button) return;
+  button.disabled = !viewerAvailable();
+  button.title = viewerAvailable()
+    ? 'Open ' + absolutePath(currentRoot) + ' in Finder'
+    : 'Finder integration is available when the report is opened by disk_scan.sh';
 }
 
 // Accurately truncate `text` to fit within `maxWidth` (canvas pixels), appending an ellipsis.
@@ -634,7 +732,7 @@ canvas.addEventListener('mousemove', function(e) {
     tt.classList.add('show');
     tt.style.left = (e.clientX + 14) + 'px';
     tt.style.top  = (e.clientY + 14) + 'px';
-    canvas.style.cursor = (seg.node.children && seg.node.children.length) ? 'pointer' : 'default';
+    canvas.style.cursor = 'pointer';
   } else {
     if (hoveredSeg) {
       hoveredSeg = null;
@@ -673,14 +771,18 @@ canvas.addEventListener('click', function(e) {
   }
 
   const seg = hitTest(mx, my);
-  if (seg && seg.node.children && seg.node.children.length) {
-    navStack.push({ node: currentRoot });
-    hoveredSeg = null;
-    withSpinner(function() {
-      renderSunburst(seg.node);
-      renderTable(seg.node.children || []);
-      updateBreadcrumb(seg.node);
-    }, seg.node);
+  if (seg) {
+    if (seg.node.children && seg.node.children.length) {
+      navStack.push({ node: currentRoot });
+      hoveredSeg = null;
+      withSpinner(function() {
+        renderSunburst(seg.node);
+        renderTable(seg.node.children || []);
+        updateBreadcrumb(seg.node);
+      }, seg.node);
+    } else {
+      openInFinder(seg.node, e);
+    }
   }
 });
 
@@ -725,6 +827,8 @@ function updateBreadcrumb(current) {
     var sep = document.createElement('span'); sep.className = 'sep'; sep.textContent = ' / '; bc.appendChild(sep);
     var sp = document.createElement('span'); sp.style.color = 'var(--text)'; sp.textContent = current.name; bc.appendChild(sp);
   }
+  updateCurrentPath(current);
+  updateFinderButton();
 }
 
 // ──────────────────────────────────────────────
@@ -803,12 +907,21 @@ function drawTable(rows) {
     var barW = Math.round(r.bytes / maxBytes * 100);
     var hasChildren = r.node && r.node.children && r.node.children.length > 0;
     tr.innerHTML =
-      '<td class="name-cell"><span class="dot" style="background:' + r.color + '"></span>' + r.name + '</td>' +
+      '<td class="name-cell"><div class="name-cell-inner"><span class="dot" style="background:' + r.color + '"></span><span class="name-cell-label">' + r.name + '</span></div></td>' +
       '<td class="size-cell">' + fmt(r.bytes) + '</td>' +
       '<td class="pct-cell">' +
         '<div class="bar-bg"><div class="bar-fill" style="width:' + barW + '%;background:' + r.color + '"></div></div>' +
         '<span style="font-size:10px;color:var(--muted)">' + pct + '%</span>' +
       '</td>';
+    var nameInner = tr.querySelector('.name-cell-inner');
+    var revealButton = document.createElement('button');
+    revealButton.className = 'reveal-row-btn';
+    revealButton.type = 'button';
+    revealButton.textContent = '↗';
+    revealButton.title = 'Open in Finder';
+    revealButton.setAttribute('aria-label', 'Open ' + r.name + ' in Finder');
+    revealButton.addEventListener('click', function(event) { openInFinder(r.node, event); });
+    nameInner.appendChild(revealButton);
     if (hasChildren) {
       tr.style.cursor = 'pointer';
       tr.addEventListener('click', function() {
@@ -1181,7 +1294,7 @@ tCanvas.addEventListener('mousemove', function(e) {
     tt.classList.add('show');
     tt.style.left = (e.clientX + 14) + 'px';
     tt.style.top  = (e.clientY + 14) + 'px';
-    tCanvas.style.cursor = (r.node.children && r.node.children.length) ? 'pointer' : 'default';
+    tCanvas.style.cursor = 'pointer';
   } else {
     if (tHovered) { tHovered = null; drawTreemap(); }
     tt.classList.remove('show');
@@ -1200,14 +1313,18 @@ tCanvas.addEventListener('click', function(e) {
   var mx = e.clientX - rect.left;
   var my = e.clientY - rect.top;
   var r = tHitTest(mx, my);
-  if (r && r.node.children && r.node.children.length) {
-    navStack.push({ node: currentRoot });
-    tHovered = null;
-    withSpinner(function() {
-      renderTreemap(r.node);
-      renderTable(r.node.children || []);
-      updateBreadcrumb(r.node);
-    }, r.node);
+  if (r) {
+    if (r.node.children && r.node.children.length) {
+      navStack.push({ node: currentRoot });
+      tHovered = null;
+      withSpinner(function() {
+        renderTreemap(r.node);
+        renderTable(r.node.children || []);
+        updateBreadcrumb(r.node);
+      }, r.node);
+    } else {
+      openInFinder(r.node, e);
+    }
   }
 });
 
@@ -1236,7 +1353,7 @@ pCanvas.addEventListener('mousemove', function(e) {
     tt.classList.add('show');
     tt.style.left = (e.clientX + 14) + 'px';
     tt.style.top  = (e.clientY + 14) + 'px';
-    pCanvas.style.cursor = (r.node.children && r.node.children.length) ? 'pointer' : 'default';
+    pCanvas.style.cursor = 'pointer';
   } else {
     if (pHovered) { pHovered = null; drawPartition(); }
     tt.classList.remove('show');
@@ -1255,14 +1372,18 @@ pCanvas.addEventListener('click', function(e) {
   var mx = e.clientX - rect.left;
   var my = e.clientY - rect.top;
   var r = pHitTest(mx, my);
-  if (r && r.node.children && r.node.children.length) {
-    navStack.push({ node: currentRoot });
-    pHovered = null;
-    withSpinner(function() {
-      renderPartition(r.node);
-      renderTable(r.node.children || []);
-      updateBreadcrumb(r.node);
-    }, r.node);
+  if (r) {
+    if (r.node.children && r.node.children.length) {
+      navStack.push({ node: currentRoot });
+      pHovered = null;
+      withSpinner(function() {
+        renderPartition(r.node);
+        renderTable(r.node.children || []);
+        updateBreadcrumb(r.node);
+      }, r.node);
+    } else {
+      openInFinder(r.node, e);
+    }
   }
 });
 
@@ -1294,6 +1415,8 @@ function renderCurrentView(node) {
   if (activeView === 'sunburst') renderSunburst(node);
   else if (activeView === 'partition') renderPartition(node);
   else renderTreemap(node);
+  updateCurrentPath(node);
+  updateFinderButton();
 }
 
 function topFolderColor(node) {
@@ -1355,7 +1478,7 @@ window.addEventListener('load', function() {
 
   // Header meta
   document.getElementById('header-meta').innerHTML =
-    data.target + ' &middot; ' + new Date().toLocaleDateString();
+    (data.display_target || data.target) + ' &middot; ' + new Date().toLocaleDateString();
 
   // Combined summary card
   var topChildren = (data.tree.children || []).slice().sort(function(a,b){ return b.bytes - a.bytes; });
@@ -1369,16 +1492,19 @@ window.addEventListener('load', function() {
     for (var i = 8; i < topChildren.length; i++) othersBytes += topChildren[i].bytes;
   }
 
+  var disk = data.disk || {};
   var html = '<div class="summary-top">';
   // KPI pills
   html += '<div class="kpi-row">';
-  html += '<div class="kpi"><div class="kpi-label">Total</div><div class="kpi-val">' + fmt(data.total_bytes) + '</div><div class="kpi-sub">' + data.target + '</div></div>';
+  html += '<div class="kpi"><div class="kpi-label">Scanned</div><div class="kpi-val">' + fmt(data.total_bytes) + '</div><div class="kpi-sub">' + (data.display_target || data.target) + '</div></div>';
+  html += '<div class="kpi"><div class="kpi-label">Disk used</div><div class="kpi-val">' + fmt(disk.used_bytes || 0) + '</div><div class="kpi-sub">of ' + fmt(disk.capacity_bytes || 0) + '</div></div>';
+  html += '<div class="kpi"><div class="kpi-label">Available</div><div class="kpi-val">' + fmt(disk.available_bytes || 0) + '</div><div class="kpi-sub">filesystem available</div></div>';
   html += '<div class="kpi"><div class="kpi-label">Folders</div><div class="kpi-val">' + folderCount + '</div><div class="kpi-sub">analyzed</div></div>';
   html += '<div class="kpi"><div class="kpi-label">Largest</div><div class="kpi-val">' + (largest ? fmt(largest.bytes) : '---') + '</div><div class="kpi-sub">' + (largest ? largest.name : '') + '</div></div>';
   html += '</div>';
   // Breakdown bar area
   html += '<div class="breakdown-area">';
-  html += '<div class="stacked-title">Space Breakdown</div><div class="stacked-bar">';
+  html += '<div class="stacked-title">Scanned Space Breakdown</div><div class="stacked-bar">';
   top8.forEach(function(c, i) {
     var pct = Math.max(0.5, (c.bytes / total) * 100);
     var pctLabel = ((c.bytes / total) * 100).toFixed(1);
@@ -1404,6 +1530,18 @@ window.addEventListener('load', function() {
       'Others <span class="stacked-legend-size">' + fmt(othersBytes) + '</span> <span class="stacked-legend-pct">' + ((othersBytes / total) * 100).toFixed(1) + '%</span></div>';
   }
   html += '</div>';
+  var userPermissionErrors = data.user_permission_errors;
+  var systemPermissionErrors = data.system_permission_errors;
+  if (typeof userPermissionErrors !== 'number') userPermissionErrors = data.permission_errors || 0;
+  if (typeof systemPermissionErrors !== 'number') systemPermissionErrors = 0;
+  if (userPermissionErrors > 0) {
+    html += '<div class="scan-warning"><strong>Limited user-data scan:</strong> ' + userPermissionErrors +
+      ' folders could not be read. Check Full Disk Access and restart the terminal app after enabling it.</div>';
+  }
+  if (systemPermissionErrors > 0) {
+    html += '<div class="scan-warning system"><strong>macOS protected:</strong> ' + systemPermissionErrors +
+      ' system Data Vault folders were skipped. These paths can remain unreadable even with Full Disk Access; their space is still reflected in Disk Used.</div>';
+  }
   document.getElementById('summary-card').innerHTML = html;
 
   // Stacked bar hover tooltips + click to drill in
@@ -1411,7 +1549,7 @@ window.addEventListener('load', function() {
     seg.addEventListener('mousemove', function(e) {
       var tt = document.getElementById('tooltip');
       tt.querySelector('.tt-name').textContent = seg.dataset.name;
-      tt.querySelector('.tt-path').textContent = seg.dataset.pct + '% of total';
+      tt.querySelector('.tt-path').textContent = seg.dataset.pct + '% of scanned size';
       tt.querySelector('.tt-size').textContent = seg.dataset.size;
       tt.classList.add('show');
       tt.style.left = (e.clientX + 14) + 'px';

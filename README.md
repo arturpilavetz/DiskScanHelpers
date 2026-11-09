@@ -76,25 +76,30 @@ Visual disk usage analyzer that generates an interactive HTML report for any fol
 
 ```bash
 bash disk_scan.sh [directory] [depth]
+bash disk_scan.sh --whole-drive [depth]
 ```
 
 - **directory** — path to scan (default: `$HOME`)
 - **depth** — how many levels deep (default: `3`)
+- **--whole-drive** — scans the writable macOS data volume and reports overall disk capacity, usage, and available space
 
 Examples:
 ```bash
 bash disk_scan.sh                          # scan $HOME, depth 3
 bash disk_scan.sh ~ 4                      # scan $HOME, depth 4 (more detail)
 bash disk_scan.sh /Users/me/Projects 2     # scan specific folder, depth 2
-bash disk_scan.sh / 2                      # whole disk, shallow
+bash disk_scan.sh --whole-drive 4          # scan the whole Mac data volume
 ```
+
+Whole-drive mode offers to run `du` with administrator privileges. For privacy-protected folders such as Mail, Messages, and Photos, macOS may also require you to grant Full Disk Access to your terminal app in **System Settings → Privacy & Security → Full Disk Access**. User-data permission failures are reported separately from macOS system Data Vault paths, which can remain unreadable even with Full Disk Access.
 
 ### How it works
 
 1. Runs `du` to collect directory sizes
 2. Embedded Python builds a tree structure from the `du` output
 3. Injects the JSON data into the HTML template
-4. Saves the result to `/tmp/DiskScanReports/disk_report.html` and opens it
+4. Saves the result to `/tmp/DiskScanReports/disk_report.html`
+5. Opens it through a token-protected server bound to `127.0.0.1`, enabling **Open in Finder** buttons for scanned folders
 
 The template is never modified — data is injected into a copy. Re-running the script overwrites the previous result.
 
@@ -113,6 +118,8 @@ Three switchable views (canvas-based):
 All views support:
 - Click to drill into a folder, breadcrumb / back to navigate up
 - Hover tooltip with name, path, size, and percentage
+- See the full active path beside **Open in Finder**; leaf blocks open directly, while parent blocks drill down and update the path
+- Open the current folder or any folder-table row directly in Finder
 - Interactive stacked bar and legend (click to drill in)
 
 Sidebar:
