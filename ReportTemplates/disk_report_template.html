@@ -7,7 +7,9 @@
 <script>
   (function() {
     var preference = 'system';
-    try { preference = localStorage.getItem('disk-report-theme') || 'system'; } catch (_) {}
+    var cookieMatch = document.cookie.match(/(?:^|; )disk-report-theme=(system|light|dark)(?:;|$)/);
+    if (cookieMatch) preference = cookieMatch[1];
+    else try { preference = localStorage.getItem('disk-report-theme') || 'system'; } catch (_) {}
     var dark = preference === 'dark' || (preference === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';
     document.documentElement.dataset.themePreference = preference;
@@ -541,6 +543,7 @@ function updateThemeButtons(preference) {
 }
 
 function refreshThemeColors() {
+  deepTableData = null;
   document.querySelectorAll('.stacked-seg').forEach(function(segment, index) {
     segment.style.background = segment.dataset.name === 'Others'
       ? cssColor('--other-color')
@@ -567,6 +570,7 @@ function applyThemePreference(preference, persist) {
   COLORS = resolved === 'dark' ? DARK_COLORS : LIGHT_COLORS;
   if (persist) {
     try { localStorage.setItem('disk-report-theme', preference); } catch (_) {}
+    document.cookie = 'disk-report-theme=' + preference + '; path=/; max-age=31536000; SameSite=Strict';
   }
   updateThemeButtons(preference);
   requestAnimationFrame(refreshThemeColors);
@@ -633,6 +637,44 @@ async function openInFinder(node, event) {
     showToast('Opened ' + (node.name || node.rel) + ' in Finder.', false);
   } catch (error) {
     showToast(error.message || 'Could not open folder.', true);
+  }
+}
+
+function nodeHasChildren(node) {
+  return !!(node && ((node.children && node.children.length) || node.has_children));
+}
+
+async function ensureSubtree(node) {
+  if (!node || node.children_loaded !== false) return node;
+  if (!viewerAvailable()) {
+    throw new Error('Deeper folders require the interactive report viewer.');
+  }
+  var response = await fetch('/api/tree?token=' + encodeURIComponent(viewerToken), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: node.rel || '/', depth: 6 })
+  });
+  var result = await response.json();
+  if (!response.ok || !result.ok) throw new Error(result.error || 'Could not load folder details');
+  Object.assign(node, result.tree);
+  deepTableData = null;
+  return node;
+}
+
+async function drillIntoNode(node) {
+  if (!nodeHasChildren(node)) return;
+  var overlay = document.getElementById('processing-overlay');
+  overlay.classList.add('show');
+  try {
+    var target = await ensureSubtree(node);
+    navStack.push({ node: currentRoot });
+    renderCurrentView(target);
+    renderTable(target.children || []);
+    updateBreadcrumb(target);
+  } catch (error) {
+    showToast(error.message || 'Could not load folder details.', true);
+  } finally {
+    overlay.classList.remove('show');
   }
 }
 
@@ -732,14 +774,19 @@ function colorBrightness(color) {
   return rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114;
 }
 
-// Preserve color at deep levels instead of eventually blending every branch to white.
-// Already-light palette colors get darker; darker colors lighten by at most 32%.
-function colorForDepth(baseColor, depth) {
+// Alternate lighter and darker hierarchy bands so parent/child boundaries remain
+// visible. Small sibling offsets avoid a wall of identical color without losing
+// the top-level branch identity.
+function colorForDepth(baseColor, depth, siblingIndex) {
   if (depth <= 0) return baseColor;
-  if (colorBrightness(baseColor) > 178) {
-    return adjustColor(baseColor, Math.max(0.72, 1 - depth * 0.055));
-  }
-  return adjustColor(baseColor, 1 + Math.min(0.32, depth * 0.08));
+  var darkBaseFactors = [1, 1.16, 0.82, 1.28, 0.72, 1.36];
+  var lightBaseFactors = [1, 0.84, 1.10, 0.74, 1.18, 0.66];
+  var factors = colorBrightness(baseColor) > 178 ? lightBaseFactors : darkBaseFactors;
+  var factor = factors[Math.min(depth, factors.length - 1)];
+  var siblingOffsets = [-0.035, 0.018, 0.045, -0.015, 0.03, -0.05];
+  factor += siblingOffsets[(siblingIndex || 0) % siblingOffsets.length];
+  factor = Math.max(0.62, Math.min(1.38, factor));
+  return adjustColor(baseColor, factor);
 }
 
 function primaryTextColor(background) {
@@ -764,7 +811,7 @@ function buildSegments(node, startAngle, endAngle, depth, rootColorIdx) {
 
     const colorIdx = depth === 0 ? i : rootColorIdx;
     const baseColor = colorForIndex(colorIdx);
-    const color = colorForDepth(baseColor, depth);
+    const color = colorForDepth(baseColor, depth, i);
 
     const ringW = maxRadius / (MAX_DEPTH + 1.8);
     const centerSize = ringW * 1.8;
@@ -914,7 +961,7 @@ canvas.addEventListener('mousemove', function(e) {
     tt.classList.add('show');
     tt.style.left = (e.clientX + 14) + 'px';
     tt.style.top  = (e.clientY + 14) + 'px';
-    canvas.style.cursor = 'pointer';
+    canvas.style.cursor = nodeHasChildren(seg.node) ? 'pointer' : 'default';
   } else {
     if (hoveredSeg) {
       hoveredSeg = null;
@@ -953,18 +1000,9 @@ canvas.addEventListener('click', function(e) {
   }
 
   const seg = hitTest(mx, my);
-  if (seg) {
-    if (seg.node.children && seg.node.children.length) {
-      navStack.push({ node: currentRoot });
-      hoveredSeg = null;
-      withSpinner(function() {
-        renderSunburst(seg.node);
-        renderTable(seg.node.children || []);
-        updateBreadcrumb(seg.node);
-      }, seg.node);
-    } else {
-      openInFinder(seg.node, e);
-    }
+  if (seg && nodeHasChildren(seg.node)) {
+    hoveredSeg = null;
+    drillIntoNode(seg.node);
   }
 });
 
@@ -982,7 +1020,7 @@ function updateBreadcrumb(current) {
     navStack = [];
     withSpinner(function() {
       renderCurrentView(RAW.tree);
-      renderTable(RAW.top.map(function(t) { return t; }));
+      renderTable(RAW.tree.children || []);
       updateBreadcrumb(RAW.tree);
     }, RAW.tree);
   });
@@ -1017,8 +1055,33 @@ function updateBreadcrumb(current) {
 //  TABLE
 // ──────────────────────────────────────────────
 let tableData = [];
+let deepTableData = null;
 let sortKey   = 'bytes';
 let sortDir   = -1;
+const MAX_TABLE_ROWS = 750;
+let tableRequestId = 0;
+
+function deepRows() {
+  if (deepTableData) return deepTableData;
+  var nodes = [];
+  var stack = (RAW.tree.children || []).slice().reverse();
+  while (stack.length) {
+    var node = stack.pop();
+    nodes.push(node);
+    var children = node.children || [];
+    for (var i = children.length - 1; i >= 0; i--) stack.push(children[i]);
+  }
+  deepTableData = nodes.map(function(node, index) {
+    return {
+      name: node.name,
+      rel: node.rel,
+      bytes: node.bytes,
+      color: COLORS[index % COLORS.length],
+      node: node
+    };
+  });
+  return deepTableData;
+}
 
 function renderTable(items) {
   tableData = items.map(function(r, i) {
@@ -1033,7 +1096,30 @@ function renderTable(items) {
   sortTable(sortKey, true);
 }
 
-function sortTable(key, keepDir) {
+async function indexedRows(filter) {
+  if (!viewerAvailable()) return null;
+  var response = await fetch('/api/search?token=' + encodeURIComponent(viewerToken), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: filter, sort: sortKey, direction: sortDir })
+  });
+  var result = await response.json();
+  if (!response.ok || !result.ok) throw new Error(result.error || 'Could not search the full tree');
+  return {
+    total: result.total,
+    rows: result.rows.map(function(node, index) {
+      return {
+        name: node.name,
+        rel: node.rel,
+        bytes: node.bytes,
+        color: COLORS[index % COLORS.length],
+        node: node
+      };
+    })
+  };
+}
+
+async function sortTable(key, keepDir) {
   if (!keepDir) {
     if (sortKey === key) sortDir *= -1;
     else { sortKey = key; sortDir = key === 'bytes' ? -1 : 1; }
@@ -1047,35 +1133,42 @@ function sortTable(key, keepDir) {
     var arrow = el.querySelector('.sort-arrow');
     if (arrow) arrow.innerHTML = isActive ? (sortDir < 0 ? '&#9662;' : '&#9652;') : '';
   });
-  var d = tableData.slice().sort(function(a, b) {
+  var filter = document.getElementById('search').value.toLowerCase();
+  var topOnly = document.getElementById('search-deep').checked;
+  var requestId = ++tableRequestId;
+  if (!topOnly && RAW.depth_mode === 'all') {
+    try {
+      var indexed = await indexedRows(filter);
+      if (indexed && requestId === tableRequestId) {
+        drawTable(indexed.rows, indexed.total);
+        return;
+      }
+    } catch (error) {
+      showToast(error.message || 'Could not search the full tree.', true);
+    }
+  }
+  var source = topOnly ? tableData.slice() : deepRows().slice();
+  if (filter) {
+    source = source.filter(function(r) {
+      return r.name.toLowerCase().includes(filter) || r.rel.toLowerCase().includes(filter);
+    });
+  }
+  source.sort(function(a, b) {
     var va = a[sortKey], vb = b[sortKey];
     return typeof va === 'string'
       ? va.localeCompare(vb) * sortDir
       : (va - vb) * sortDir;
   });
-  var filter = document.getElementById('search').value.toLowerCase();
-  var topOnly = document.getElementById('search-deep').checked;
-  var source = d;
-  if (!topOnly) {
-    var flat = [];
-    (function walk(node) {
-      if (node.name && node.rel) flat.push(node);
-      (node.children || []).forEach(walk);
-    })(RAW.tree);
-    source = flat.map(function(n, i) { return { name: n.name, rel: n.rel, bytes: n.bytes, color: COLORS[i % COLORS.length], node: n }; });
-    source.sort(function(a, b) {
-      var va = a[sortKey], vb = b[sortKey];
-      return typeof va === 'string' ? va.localeCompare(vb) * sortDir : (va - vb) * sortDir;
-    });
-  }
-  drawTable(filter ? source.filter(function(r) { return r.name.toLowerCase().includes(filter) || r.rel.toLowerCase().includes(filter); }) : source);
+  drawTable(source);
 }
 
-function filterTable() { sortTable(sortKey, true); }
+function filterTable() { return sortTable(sortKey, true); }
 
-function drawTable(rows) {
+function drawTable(rows, totalRowsOverride) {
   var tbody = document.getElementById('tbody');
   var maxBytes = rows[0] ? rows[0].bytes : 1;
+  var totalRows = typeof totalRowsOverride === 'number' ? totalRowsOverride : rows.length;
+  var visibleRows = rows.slice(0, MAX_TABLE_ROWS);
   tbody.innerHTML = '';
 
   if (!rows.length) {
@@ -1083,11 +1176,11 @@ function drawTable(rows) {
     return;
   }
 
-  rows.forEach(function(r) {
+  visibleRows.forEach(function(r) {
     var tr = document.createElement('tr');
     var pct = (r.bytes / (RAW.total_bytes || 1) * 100).toFixed(1);
     var barW = Math.round(r.bytes / maxBytes * 100);
-    var hasChildren = r.node && r.node.children && r.node.children.length > 0;
+    var hasChildren = nodeHasChildren(r.node);
     tr.innerHTML =
       '<td class="name-cell"><div class="name-cell-inner"><span class="dot" style="background:' + r.color + '"></span><span class="name-cell-label">' + r.name + '</span></div></td>' +
       '<td class="size-cell">' + fmt(r.bytes) + '</td>' +
@@ -1107,19 +1200,20 @@ function drawTable(rows) {
     if (hasChildren) {
       tr.style.cursor = 'pointer';
       tr.addEventListener('click', function() {
-        var target = r.node;
-        navStack.push({ node: currentRoot });
-        withSpinner(function() {
-          renderCurrentView(target);
-          renderTable(target.children || []);
-          updateBreadcrumb(target);
-        });
+        drillIntoNode(r.node);
       });
     } else {
       tr.style.cursor = 'default';
     }
     tbody.appendChild(tr);
   });
+
+  if (totalRows > visibleRows.length) {
+    var limitRow = document.createElement('tr');
+    limitRow.innerHTML = '<td colspan="3" class="no-data">Showing ' + visibleRows.length.toLocaleString() +
+      ' of ' + totalRows.toLocaleString() + ' folders. Filter to narrow the results.</td>';
+    tbody.appendChild(limitRow);
+  }
 }
 
 // ──────────────────────────────────────────────
@@ -1177,7 +1271,7 @@ function buildPartitionRects(node, x, y, w, h, depth, rootColorIdx) {
 
     var colorIdx = depth === 0 ? i : rootColorIdx;
     var baseColor = colorForIndex(colorIdx);
-    var color = colorForDepth(baseColor, depth);
+    var color = colorForDepth(baseColor, depth, i);
 
     // The cell itself
     pRects.push({
@@ -1374,7 +1468,7 @@ function buildTreemapRects(node, x, y, w, h, depth, rootColorIdx) {
   rects.forEach(function(r, i) {
     var colorIdx = depth === 0 ? i : rootColorIdx;
     var baseColor = colorForIndex(colorIdx);
-    var color = colorForDepth(baseColor, depth);
+    var color = colorForDepth(baseColor, depth, i);
 
     tRects.push({
       node: r.node, x: r.x, y: r.y, w: r.w, h: r.h,
@@ -1480,7 +1574,7 @@ tCanvas.addEventListener('mousemove', function(e) {
     tt.classList.add('show');
     tt.style.left = (e.clientX + 14) + 'px';
     tt.style.top  = (e.clientY + 14) + 'px';
-    tCanvas.style.cursor = 'pointer';
+    tCanvas.style.cursor = nodeHasChildren(r.node) ? 'pointer' : 'default';
   } else {
     if (tHovered) { tHovered = null; drawTreemap(); }
     tt.classList.remove('show');
@@ -1499,18 +1593,9 @@ tCanvas.addEventListener('click', function(e) {
   var mx = e.clientX - rect.left;
   var my = e.clientY - rect.top;
   var r = tHitTest(mx, my);
-  if (r) {
-    if (r.node.children && r.node.children.length) {
-      navStack.push({ node: currentRoot });
-      tHovered = null;
-      withSpinner(function() {
-        renderTreemap(r.node);
-        renderTable(r.node.children || []);
-        updateBreadcrumb(r.node);
-      }, r.node);
-    } else {
-      openInFinder(r.node, e);
-    }
+  if (r && nodeHasChildren(r.node)) {
+    tHovered = null;
+    drillIntoNode(r.node);
   }
 });
 
@@ -1539,7 +1624,7 @@ pCanvas.addEventListener('mousemove', function(e) {
     tt.classList.add('show');
     tt.style.left = (e.clientX + 14) + 'px';
     tt.style.top  = (e.clientY + 14) + 'px';
-    pCanvas.style.cursor = 'pointer';
+    pCanvas.style.cursor = nodeHasChildren(r.node) ? 'pointer' : 'default';
   } else {
     if (pHovered) { pHovered = null; drawPartition(); }
     tt.classList.remove('show');
@@ -1558,18 +1643,9 @@ pCanvas.addEventListener('click', function(e) {
   var mx = e.clientX - rect.left;
   var my = e.clientY - rect.top;
   var r = pHitTest(mx, my);
-  if (r) {
-    if (r.node.children && r.node.children.length) {
-      navStack.push({ node: currentRoot });
-      pHovered = null;
-      withSpinner(function() {
-        renderPartition(r.node);
-        renderTable(r.node.children || []);
-        updateBreadcrumb(r.node);
-      }, r.node);
-    } else {
-      openInFinder(r.node, e);
-    }
+  if (r && nodeHasChildren(r.node)) {
+    pHovered = null;
+    drillIntoNode(r.node);
   }
 });
 
@@ -1635,24 +1711,23 @@ function withSpinner(fn) {
   });
 }
 
-function withTableSpinner(fn) {
+async function withTableSpinner(fn) {
   var overlay = document.getElementById('table-overlay');
   overlay.classList.add('show');
-  requestAnimationFrame(function() {
-    requestAnimationFrame(function() {
-      try { fn(); } finally { overlay.classList.remove('show'); }
-    });
+  await new Promise(function(resolve) {
+    requestAnimationFrame(function() { requestAnimationFrame(resolve); });
   });
+  try { await fn(); } finally { overlay.classList.remove('show'); }
 }
 
-function uiFilter() { withTableSpinner(function() { filterTable(); }); }
-function uiSort(key) { withTableSpinner(function() { sortTable(key); }); }
+function uiFilter() { withTableSpinner(function() { return filterTable(); }); }
+function uiSort(key) { withTableSpinner(function() { return sortTable(key); }); }
 
 var _searchTimer;
 function uiSearch() {
   clearTimeout(_searchTimer);
   _searchTimer = setTimeout(function() {
-    withTableSpinner(function() { filterTable(); });
+    withTableSpinner(function() { return filterTable(); });
   }, 180);
 }
 
@@ -1669,7 +1744,7 @@ window.addEventListener('load', function() {
 
   // Combined summary card
   var topChildren = (data.tree.children || []).slice().sort(function(a,b){ return b.bytes - a.bytes; });
-  var folderCount = data.top ? data.top.length : topChildren.length;
+  var folderCount = typeof data.top_count === 'number' ? data.top_count : topChildren.length;
   var largest = topChildren.length ? topChildren[0] : null;
   var total = data.total_bytes || 1;
 
@@ -1794,7 +1869,7 @@ window.addEventListener('load', function() {
   });
 
   renderCurrentView(data.tree);
-  renderTable(data.top);
+  renderTable(data.tree.children || []);
   updateBreadcrumb(data.tree);
 });
 

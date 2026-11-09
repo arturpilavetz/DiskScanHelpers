@@ -76,30 +76,32 @@ Visual disk usage analyzer that generates an interactive HTML report for any fol
 
 ```bash
 bash disk_scan.sh [directory] [depth]
-bash disk_scan.sh --whole-drive [depth]
+bash disk_scan.sh --whole-drive
 ```
 
 - **directory** — path to scan (default: `$HOME`)
-- **depth** — how many levels deep (default: `3`)
-- **--whole-drive** — scans the writable macOS data volume and reports overall disk capacity, usage, and available space
+- **depth** — maximum collected depth for an explicitly selected directory (default: `3`)
+- **--whole-drive** — scans the writable macOS data volume to its complete directory depth and reports overall disk capacity, usage, and available space
 
 Examples:
 ```bash
 bash disk_scan.sh                          # scan $HOME, depth 3
 bash disk_scan.sh ~ 4                      # scan $HOME, depth 4 (more detail)
 bash disk_scan.sh /Users/me/Projects 2     # scan specific folder, depth 2
-bash disk_scan.sh --whole-drive 4          # scan the whole Mac data volume
+bash disk_scan.sh --whole-drive            # scan the complete Mac data-volume tree
 ```
 
 Whole-drive mode offers to run `du` with administrator privileges. For privacy-protected folders such as Mail, Messages, and Photos, macOS may also require you to grant Full Disk Access to your terminal app in **System Settings → Privacy & Security → Full Disk Access**. User-data permission failures are reported separately from macOS system Data Vault paths, which can remain unreadable even with Full Disk Access.
 
+Like Baobab, whole-drive mode collects the complete hierarchy while each chart renders a bounded local depth window. Drill into any parent folder to reveal the next levels without rescanning. The sidebar limits rendered rows for responsiveness but searches the complete collected tree.
+
 ### How it works
 
 1. Runs `du` to collect directory sizes
-2. Embedded Python builds a tree structure from the `du` output
-3. Injects the JSON data into the HTML template
+2. Embedded Python builds the complete hierarchy in linear time and writes `/tmp/DiskScanReports/disk_data.json`
+3. Injects an initial six-level window into the HTML report
 4. Saves the result to `/tmp/DiskScanReports/disk_report.html`
-5. Opens it through a token-protected server bound to `127.0.0.1`, enabling **Open in Finder** buttons for scanned folders
+5. Opens it through a token-protected server bound to `127.0.0.1`, which lazily supplies deeper subtrees, full-tree search, and **Open in Finder** actions
 
 The template is never modified — data is injected into a copy. Re-running the script overwrites the previous result.
 

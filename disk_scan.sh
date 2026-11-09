@@ -2,7 +2,7 @@
 # ─────────────────────────────────────────────
 #  disk_scan.sh  —  Disk Usage Report Generator
 #  Usage:  bash disk_scan.sh [directory] [depth]
-#          bash disk_scan.sh --whole-drive [depth]
+#          bash disk_scan.sh --whole-drive
 #  Default: scans $HOME, depth 3
 # ─────────────────────────────────────────────
 
@@ -14,10 +14,10 @@ if [ "${1:-}" = "--whole-drive" ]; then
   WHOLE_DRIVE=1
   TARGET="/System/Volumes/Data"
   DISPLAY_TARGET="Whole Mac"
-  DEPTH="${2:-4}"
+  DEPTH="all"
 elif [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
   echo "Usage: bash disk_scan.sh [directory] [depth]"
-  echo "       bash disk_scan.sh --whole-drive [depth]"
+  echo "       bash disk_scan.sh --whole-drive"
   exit 0
 else
   TARGET="${1:-$HOME}"
@@ -25,12 +25,26 @@ else
   DEPTH="${2:-3}"
 fi
 
+if [ "$WHOLE_DRIVE" -eq 0 ]; then
+  case "$DEPTH" in
+    ''|*[!0-9]*) echo "Error: depth must be a non-negative integer" >&2; exit 1 ;;
+  esac
+fi
+
 if [ ! -d "$TARGET" ]; then
   echo "Error: not a directory: $TARGET" >&2
   exit 1
 fi
 
-echo "🔍 Scanning: $DISPLAY_TARGET (depth $DEPTH) ..."
+echo "🔍 Scanning: $DISPLAY_TARGET ..."
+if [ "$WHOLE_DRIVE" -eq 1 ]; then
+  echo "   Collecting the complete directory tree; charts show a local depth window as you drill in."
+  if [ -n "${2:-}" ]; then
+    echo "   Note: the depth argument is no longer needed in whole-drive mode and was ignored."
+  fi
+else
+  echo "   Detail depth: $DEPTH"
+fi
 echo "   This may take a moment..."
 
 # ── Helper: bytes → human readable
@@ -62,7 +76,11 @@ if [ "$WHOLE_DRIVE" -eq 1 ] && [ "$EUID" -ne 0 ] && [ "${DISK_SCAN_NO_PROMPT:-0}
   esac
 fi
 
-"${DU_COMMAND[@]}" -d "$DEPTH" -x "$TARGET" > "$RAW_TMP" 2> "$ERR_TMP"
+if [ "$WHOLE_DRIVE" -eq 1 ]; then
+  "${DU_COMMAND[@]}" -x "$TARGET" > "$RAW_TMP" 2> "$ERR_TMP"
+else
+  "${DU_COMMAND[@]}" -d "$DEPTH" -x "$TARGET" > "$RAW_TMP" 2> "$ERR_TMP"
+fi
 sort -rn "$RAW_TMP" > "$TMP"
 
 PERMISSION_ERRORS=$(awk '/Operation not permitted|Permission denied/ { count++ } END { print count + 0 }' "$ERR_TMP")
@@ -108,6 +126,7 @@ echo "   Disk: $(human $DISK_USED_BYTES) used · $(human $DISK_AVAILABLE_BYTES) 
 RESULT_DIR="${DISK_SCAN_RESULT_DIR:-/tmp/DiskScanReports}"
 mkdir -p "$RESULT_DIR"
 RESULT_HTML="$RESULT_DIR/disk_report.html"
+RESULT_DATA="$RESULT_DIR/disk_data.json"
 
 python3 - <<PYEOF
 import os, json
@@ -115,7 +134,6 @@ import os, json
 tmp_file  = "$TMP"
 target    = "$TARGET"
 display_target = "$DISPLAY_TARGET"
-depth_max = int("$DEPTH")
 error_file = "$ERR_TMP"
 
 rows = []
@@ -141,34 +159,47 @@ with open(tmp_file) as f:
 
 rows.sort(key=lambda r: r["bytes"], reverse=True)
 
-def build_node(row, all_rows):
-    path = row["path"]
-    depth = row["depth"]
-    children = [
-        r for r in all_rows
-        if r["depth"] == depth + 1 and r["path"].startswith(path + "/")
-    ]
-    children.sort(key=lambda r: r["bytes"], reverse=True)
-    return {
+# Build the complete tree in O(n). The previous recursive builder searched all
+# rows for every node and truncated each directory to 50 children, which does
+# not scale to Baobab-style full-depth scans.
+nodes = {}
+for row in rows:
+    normalized_path = os.path.abspath(row["path"])
+    nodes[normalized_path] = {
         "name":  row["name"],
         "rel":   row["rel"],
         "bytes": row["bytes"],
-        "children": [build_node(c, all_rows) for c in children[:50]]
+        "children": []
     }
+
+for row in rows:
+    if row["depth"] == 0:
+        continue
+    normalized_path = os.path.abspath(row["path"])
+    parent_path = os.path.dirname(normalized_path)
+    parent = nodes.get(parent_path)
+    if parent is not None:
+        parent["children"].append(nodes[normalized_path])
+
+for node in nodes.values():
+    node["children"].sort(key=lambda child: child["bytes"], reverse=True)
 
 root_rows = [r for r in rows if r["depth"] == 0]
 if not root_rows:
     root_rows = [rows[0]] if rows else []
 
-root = build_node(root_rows[0], rows) if root_rows else {"name": target, "rel": "/", "bytes": 0, "children": []}
+root = nodes.get(os.path.abspath(root_rows[0]["path"])) if root_rows else None
+if root is None:
+    root = {"name": target, "rel": "/", "bytes": 0, "children": []}
 if int("$WHOLE_DRIVE"):
     root["name"] = display_target
-top = [r for r in rows if r["depth"] == 1][:100]
 
 output = {
     "target": target,
     "display_target": display_target,
     "scope": "whole_drive" if int("$WHOLE_DRIVE") else "folder",
+    "depth_mode": "all" if int("$WHOLE_DRIVE") else "limited",
+    "requested_depth": None if int("$WHOLE_DRIVE") else int("$DEPTH"),
     "total_bytes": root_rows[0]["bytes"] if root_rows else 0,
     "disk": {
         "capacity_bytes": int("$DISK_TOTAL_BYTES"),
@@ -180,7 +211,7 @@ output = {
     "user_permission_errors": int("$USER_PERMISSION_ERRORS"),
     "system_permission_errors": int("$SYSTEM_PERMISSION_ERRORS"),
     "tree": root,
-    "top": top
+    "top_count": len(root["children"])
 }
 
 if output["permission_errors"]:
@@ -190,7 +221,28 @@ if output["permission_errors"]:
             if "Operation not permitted" in line or "Permission denied" in line
         ][:5]
 
-json_str = json.dumps(output)
+def windowed_node(node, remaining_depth):
+    has_children = bool(node["children"])
+    include_children = remaining_depth > 0
+    return {
+        "name": node["name"],
+        "rel": node["rel"],
+        "bytes": node["bytes"],
+        "has_children": has_children,
+        "children_loaded": include_children or not has_children,
+        "children": [windowed_node(child, remaining_depth - 1) for child in node["children"]]
+                    if include_children else []
+    }
+
+# Keep the complete hierarchy beside the report for the loopback viewer. The
+# HTML embeds only a local window so hundreds of thousands of nodes do not have
+# to be parsed by the browser up front.
+with open("$RESULT_DATA", "w") as data_file:
+    json.dump(output, data_file, separators=(",", ":"))
+
+initial_output = dict(output)
+initial_output["tree"] = windowed_node(root, 6)
+json_str = json.dumps(initial_output, separators=(",", ":"))
 
 html = open("$OUT_HTML").read()
 html = html.replace("__DISK_DATA_PLACEHOLDER__", json_str)
@@ -199,6 +251,7 @@ with open("$RESULT_HTML", "w") as f:
     f.write(html)
 
 print(f"   Report written: $RESULT_HTML")
+print(f"   Full tree index: $RESULT_DATA")
 PYEOF
 
 echo ""
@@ -228,6 +281,7 @@ rm -f "$URL_FILE"
 TOKEN=$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')
 nohup python3 "$SERVER_SCRIPT" \
   --report "$RESULT_HTML" \
+  --data "$RESULT_DATA" \
   --root "$TARGET" \
   --token "$TOKEN" \
   --url-file "$URL_FILE" \
