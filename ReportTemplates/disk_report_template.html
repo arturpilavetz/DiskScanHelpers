@@ -4,6 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Disk Usage Report</title>
+<script>
+  (function() {
+    var preference = 'system';
+    try { preference = localStorage.getItem('disk-report-theme') || 'system'; } catch (_) {}
+    var dark = preference === 'dark' || (preference === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    document.documentElement.dataset.themePreference = preference;
+  })();
+</script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
@@ -19,9 +28,67 @@
     --accent2:  #60a5fa;
     --green:    #10b981;
     --amber:    #f59e0b;
+    --accent-soft: #eff6ff;
+    --row-hover: #f8fafc;
+    --overlay: rgba(255,255,255,0.68);
+    --scrollbar: #d1d5db;
+    --warning-border: #fcd34d;
+    --warning-bg: #fffbeb;
+    --warning-text: #92400e;
+    --info-border: #bfdbfe;
+    --info-bg: #eff6ff;
+    --info-text: #1e40af;
+    --toast-bg: #0f172a;
+    --toast-error: #991b1b;
+    --canvas-stroke: rgba(255,255,255,0.9);
+    --canvas-stroke-soft: rgba(255,255,255,0.48);
+    --canvas-center: #ffffff;
+    --canvas-center-border: #e5e7eb;
+    --canvas-center-text: #1e293b;
+    --canvas-center-accent: #3b82f6;
+    --canvas-header: rgba(255,255,255,0.12);
+    --other-color: #cbd5e1;
     --shadow:   0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
     --shadow-lg: 0 4px 12px rgba(0,0,0,0.08);
     --radius:   12px;
+    color-scheme: light;
+  }
+
+  :root[data-theme="dark"] {
+    --bg:       #080b11;
+    --surface:  #10151d;
+    --surface2: #171e29;
+    --border:   #263142;
+    --text:     #f1f5f9;
+    --text2:    #cbd5e1;
+    --muted:    #7f8da3;
+    --accent:   #60a5fa;
+    --accent2:  #93c5fd;
+    --green:    #34d399;
+    --amber:    #fbbf24;
+    --accent-soft: #172554;
+    --row-hover: #182231;
+    --overlay: rgba(8,11,17,0.76);
+    --scrollbar: #334155;
+    --warning-border: #854d0e;
+    --warning-bg: #2a1d08;
+    --warning-text: #fde68a;
+    --info-border: #1e40af;
+    --info-bg: #101d3a;
+    --info-text: #bfdbfe;
+    --toast-bg: #e2e8f0;
+    --toast-error: #ef4444;
+    --canvas-stroke: rgba(8,11,17,0.88);
+    --canvas-stroke-soft: rgba(8,11,17,0.5);
+    --canvas-center: #10151d;
+    --canvas-center-border: #334155;
+    --canvas-center-text: #f1f5f9;
+    --canvas-center-accent: #60a5fa;
+    --canvas-header: rgba(8,11,17,0.22);
+    --other-color: #475569;
+    --shadow: 0 1px 3px rgba(0,0,0,0.34), 0 1px 2px rgba(0,0,0,0.28);
+    --shadow-lg: 0 10px 30px rgba(0,0,0,0.42);
+    color-scheme: dark;
   }
 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -33,6 +100,7 @@
     font-size: 13px;
     line-height: 1.6;
     min-height: 100vh;
+    transition: background-color 0.2s ease, color 0.2s ease;
   }
 
   /* -- HEADER -- */
@@ -48,6 +116,18 @@
   header h1 { font-size: 20px; font-weight: 700; color: var(--text); }
   header h1 span { color: var(--accent); }
   .meta { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .theme-toggle {
+    display: flex; gap: 2px; padding: 3px; border: 1px solid var(--border);
+    border-radius: 9px; background: var(--surface2);
+  }
+  .theme-toggle button {
+    border: 0; border-radius: 6px; padding: 4px 9px; background: transparent;
+    color: var(--muted); font: 500 10px/1.2 inherit; cursor: pointer;
+  }
+  .theme-toggle button:hover { color: var(--text2); }
+  .theme-toggle button.active {
+    background: var(--surface); color: var(--accent); box-shadow: var(--shadow);
+  }
 
   /* -- LAYOUT -- */
   .layout {
@@ -104,10 +184,10 @@
   .stacked-legend-size { font-weight: 700; color: var(--accent); font-size: 14px; }
   .stacked-legend-pct { color: var(--muted); font-size: 13px; font-weight: 400; }
   .scan-warning {
-    padding: 9px 12px; border-radius: 8px; border: 1px solid #fcd34d;
-    background: #fffbeb; color: #92400e; font-size: 11px;
+    padding: 9px 12px; border-radius: 8px; border: 1px solid var(--warning-border);
+    background: var(--warning-bg); color: var(--warning-text); font-size: 11px;
   }
-  .scan-warning.system { border-color: #bfdbfe; background: #eff6ff; color: #1e40af; }
+  .scan-warning.system { border-color: var(--info-border); background: var(--info-bg); color: var(--info-text); }
 
   /* -- CHART CARD -- */
   .chart-card {
@@ -136,11 +216,12 @@
     border-radius: 7px; padding: 5px 10px; font: 500 11px/1.2 inherit;
     cursor: pointer; white-space: nowrap; transition: all 0.15s;
   }
-  .finder-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: #eff6ff; }
+  .finder-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
   .finder-btn:disabled { opacity: 0.45; cursor: not-allowed; }
   #current-path {
     max-width: min(44vw, 560px); overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; color: var(--muted); font: 400 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+    padding: 5px 9px; border-radius: 7px; background: var(--surface2); border: 1px solid var(--border);
   }
   .chart-body {
     flex: 1; position: relative; display: flex; align-items: center; justify-content: center;
@@ -223,7 +304,7 @@
   #table-overlay {
     position: absolute;
     inset: 0;
-    background: rgba(255,255,255,0.6);
+    background: var(--overlay);
     display: none;
     align-items: flex-start;
     justify-content: center;
@@ -254,7 +335,7 @@
   .data-table th.sorted { color: var(--accent); }
   .data-table td { padding: 7px 16px; border-bottom: 1px solid var(--border); font-size: 12px; }
   .data-table tr:last-child td { border-bottom: none; }
-  .data-table tr:hover { background: #f8fafc; }
+  .data-table tr:hover { background: var(--row-hover); }
   .data-table tr { cursor: pointer; transition: background 0.15s; }
   td.name-cell {
     max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -266,7 +347,7 @@
     margin-left: auto; padding: 1px 5px; border: 0; border-radius: 5px;
     background: transparent; color: var(--muted); cursor: pointer; flex-shrink: 0;
   }
-  .reveal-row-btn:hover { color: var(--accent); background: #eff6ff; }
+  .reveal-row-btn:hover { color: var(--accent); background: var(--accent-soft); }
   .dot {
     display: inline-block; width: 8px; height: 8px; border-radius: 50%;
     margin-right: 7px; flex-shrink: 0;
@@ -298,18 +379,18 @@
   #tooltip .tt-size { color: var(--accent); font-weight: 600; }
   #toast {
     position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 12px);
-    padding: 9px 14px; border-radius: 8px; background: #0f172a; color: #fff;
+    padding: 9px 14px; border-radius: 8px; background: var(--toast-bg); color: var(--surface);
     font-size: 12px; box-shadow: var(--shadow-lg); opacity: 0; pointer-events: none;
     transition: all 0.18s; z-index: 200;
   }
   #toast.show { opacity: 1; transform: translate(-50%, 0); }
-  #toast.error { background: #991b1b; }
+  #toast.error { background: var(--toast-error); color: #fff; }
 
   /* -- SPINNER OVERLAY -- */
   #processing-overlay {
     position: absolute;
     inset: 0;
-    background: rgba(255,255,255,0.6);
+    background: var(--overlay);
     display: none;
     align-items: center;
     justify-content: center;
@@ -341,7 +422,7 @@
 
   ::-webkit-scrollbar { width: 5px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 3px; }
 </style>
 </head>
 <body>
@@ -358,6 +439,11 @@
     <h1>Disk Usage <span>Report</span></h1>
   </div>
   <div class="meta" id="header-meta"></div>
+  <div class="theme-toggle" role="group" aria-label="Color theme">
+    <button type="button" data-theme-value="system" onclick="setThemePreference('system')">Auto</button>
+    <button type="button" data-theme-value="light" onclick="setThemePreference('light')">Light</button>
+    <button type="button" data-theme-value="dark" onclick="setThemePreference('dark')">Dark</button>
+  </div>
 </header>
 
 <div class="layout">
@@ -391,7 +477,7 @@
   <div class="sidebar">
     <div class="sidebar-title" style="display:flex;align-items:center;justify-content:space-between;">
       Folders
-      <label style="font-size:11px;color:#94a3b8;font-weight:400;display:flex;align-items:center;gap:4px;cursor:pointer;user-select:none;">
+      <label style="font-size:11px;color:var(--muted);font-weight:400;display:flex;align-items:center;gap:4px;cursor:pointer;user-select:none;">
         <input type="checkbox" id="search-deep" onchange="uiFilter()" style="margin:0;cursor:pointer;" checked> Only Top Folders
       </label>
     </div>
@@ -422,8 +508,11 @@
 //  DATA  (injected by disk_scan.sh)
 // ──────────────────────────────────────────────
 var RAW = __DISK_DATA_PLACEHOLDER__;
-const COLORS = ['#3b82f6','#60a5fa','#93c5fd','#38bdf8','#34d399','#a78bfa','#f472b6','#cbd5e1',
-                '#0ea5e9','#6366f1','#10b981','#8b5cf6','#ec4899','#9ca3af','#f59e0b','#ef4444'];
+const LIGHT_COLORS = ['#3b82f6','#60a5fa','#93c5fd','#38bdf8','#34d399','#a78bfa','#f472b6','#94a3b8',
+                      '#0ea5e9','#6366f1','#10b981','#8b5cf6','#ec4899','#64748b','#f59e0b','#ef4444'];
+const DARK_COLORS = ['#3b82f6','#0ea5e9','#14b8a6','#38bdf8','#10b981','#8b5cf6','#ec4899','#64748b',
+                     '#0284c7','#6366f1','#059669','#7c3aed','#db2777','#475569','#d97706','#dc2626'];
+let COLORS = document.documentElement.dataset.theme === 'dark' ? DARK_COLORS : LIGHT_COLORS;
 
 // ──────────────────────────────────────────────
 //  UTILS
@@ -434,6 +523,67 @@ function fmt(b) {
   if (b >= 1e3)  return (b/1e3).toFixed(0)  + ' KB';
   return b + ' B';
 }
+
+function cssColor(variableName) {
+  return getComputedStyle(document.documentElement).getPropertyValue(variableName).trim();
+}
+
+function resolvedTheme(preference) {
+  if (preference === 'dark' || preference === 'light') return preference;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function updateThemeButtons(preference) {
+  document.querySelectorAll('[data-theme-value]').forEach(function(button) {
+    button.classList.toggle('active', button.dataset.themeValue === preference);
+    button.setAttribute('aria-pressed', button.dataset.themeValue === preference ? 'true' : 'false');
+  });
+}
+
+function refreshThemeColors() {
+  document.querySelectorAll('.stacked-seg').forEach(function(segment, index) {
+    segment.style.background = segment.dataset.name === 'Others'
+      ? cssColor('--other-color')
+      : COLORS[index % COLORS.length];
+  });
+  document.querySelectorAll('.stacked-dot').forEach(function(dot, index) {
+    var item = dot.closest('.stacked-legend-item');
+    dot.style.background = item && item.dataset.name === 'Others'
+      ? cssColor('--other-color')
+      : COLORS[index % COLORS.length];
+  });
+
+  if (currentRoot) {
+    var visibleNodes = tableData.map(function(row) { return row.node; });
+    renderCurrentView(currentRoot);
+    if (visibleNodes.length) renderTable(visibleNodes);
+  }
+}
+
+function applyThemePreference(preference, persist) {
+  var resolved = resolvedTheme(preference);
+  document.documentElement.dataset.theme = resolved;
+  document.documentElement.dataset.themePreference = preference;
+  COLORS = resolved === 'dark' ? DARK_COLORS : LIGHT_COLORS;
+  if (persist) {
+    try { localStorage.setItem('disk-report-theme', preference); } catch (_) {}
+  }
+  updateThemeButtons(preference);
+  requestAnimationFrame(refreshThemeColors);
+}
+
+function setThemePreference(preference) {
+  applyThemePreference(preference, true);
+}
+
+var systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+var handleSystemThemeChange = function() {
+  if ((document.documentElement.dataset.themePreference || 'system') === 'system') {
+    applyThemePreference('system', false);
+  }
+};
+if (systemThemeQuery.addEventListener) systemThemeQuery.addEventListener('change', handleSystemThemeChange);
+else if (systemThemeQuery.addListener) systemThemeQuery.addListener(handleSystemThemeChange);
 
 var viewerToken = new URLSearchParams(window.location.search).get('token');
 var toastTimer = null;
@@ -565,6 +715,41 @@ function adjustColor(hex, factor) {
   return 'rgb(' + r + ',' + g + ',' + b + ')';
 }
 
+function colorChannels(color) {
+  if (color.startsWith('#')) {
+    return [
+      parseInt(color.slice(1, 3), 16),
+      parseInt(color.slice(3, 5), 16),
+      parseInt(color.slice(5, 7), 16)
+    ];
+  }
+  var matches = color.match(/(\d+)/g) || [0, 0, 0];
+  return [parseInt(matches[0]), parseInt(matches[1]), parseInt(matches[2])];
+}
+
+function colorBrightness(color) {
+  var rgb = colorChannels(color);
+  return rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114;
+}
+
+// Preserve color at deep levels instead of eventually blending every branch to white.
+// Already-light palette colors get darker; darker colors lighten by at most 32%.
+function colorForDepth(baseColor, depth) {
+  if (depth <= 0) return baseColor;
+  if (colorBrightness(baseColor) > 178) {
+    return adjustColor(baseColor, Math.max(0.72, 1 - depth * 0.055));
+  }
+  return adjustColor(baseColor, 1 + Math.min(0.32, depth * 0.08));
+}
+
+function primaryTextColor(background) {
+  return colorBrightness(background) > 165 ? '#1e293b' : '#ffffff';
+}
+
+function secondaryTextColor(background) {
+  return colorBrightness(background) > 165 ? 'rgba(30,41,59,0.72)' : 'rgba(255,255,255,0.8)';
+}
+
 function buildSegments(node, startAngle, endAngle, depth, rootColorIdx) {
   if (depth > MAX_DEPTH) return;
   const children = (node.children || []).filter(c => c.bytes > 0);
@@ -578,10 +763,8 @@ function buildSegments(node, startAngle, endAngle, depth, rootColorIdx) {
     if (sweep < 0.003) { angle += sweep; return; }
 
     const colorIdx = depth === 0 ? i : rootColorIdx;
-    const lightenStep = 0.25;
-    const factor = 1.0 + depth * lightenStep;
     const baseColor = colorForIndex(colorIdx);
-    const color = depth === 0 ? baseColor : adjustColor(baseColor, factor);
+    const color = colorForDepth(baseColor, depth);
 
     const ringW = maxRadius / (MAX_DEPTH + 1.8);
     const centerSize = ringW * 1.8;
@@ -629,13 +812,12 @@ function drawSunburst() {
     ctx.fillStyle = isHovered ? adjustColor(seg.color, 0.85) : seg.color;
     ctx.fill();
 
-    ctx.strokeStyle = '#ffffff';
+    ctx.strokeStyle = cssColor('--canvas-stroke');
     ctx.lineWidth = 1.5;
     ctx.stroke();
   });
 
   // Draw percentage labels on segments
-  ctx.fillStyle = '#ffffff';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   segments.forEach(seg => {
@@ -651,7 +833,7 @@ function drawSunburst() {
     var fs = Math.min(11, Math.max(8, radialW * 0.3));
     ctx.font = '600 ' + fs + 'px Inter, sans-serif';
     var label = pct >= 10 ? Math.round(pct) + '%' : pct.toFixed(1) + '%';
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = primaryTextColor(seg.color);
     ctx.fillText(label, lx, ly);
   });
 
@@ -659,13 +841,13 @@ function drawSunburst() {
   const centerR = ringW * 1.8 - 4;
   ctx.beginPath();
   ctx.arc(CX, CY, centerR, 0, Math.PI * 2);
-  ctx.fillStyle = '#ffffff';
+  ctx.fillStyle = cssColor('--canvas-center');
   ctx.fill();
-  ctx.strokeStyle = '#e5e7eb';
+  ctx.strokeStyle = cssColor('--canvas-center-border');
   ctx.lineWidth = 1;
   ctx.stroke();
 
-  ctx.fillStyle = '#1e293b';
+  ctx.fillStyle = cssColor('--canvas-center-text');
   const nameFontSize = Math.min(18, Math.max(13, centerR * 0.35));
   ctx.font = '700 ' + nameFontSize + 'px Inter, sans-serif';
   ctx.textAlign = 'center';
@@ -674,7 +856,7 @@ function drawSunburst() {
   const maxChars = Math.floor(centerR * 2 / (nameFontSize * 0.6));
   const truncName = name.length > maxChars ? name.slice(0, maxChars - 1) + '...' : name;
   ctx.fillText(truncName, CX, CY - nameFontSize * 0.5);
-  ctx.fillStyle = '#3b82f6';
+  ctx.fillStyle = cssColor('--canvas-center-accent');
   const sizeFontSize = Math.min(15, Math.max(11, centerR * 0.28));
   ctx.font = '600 ' + sizeFontSize + 'px Inter, sans-serif';
   ctx.fillText(fmt(currentRoot.bytes), CX, CY + sizeFontSize * 0.7);
@@ -994,9 +1176,8 @@ function buildPartitionRects(node, x, y, w, h, depth, rootColorIdx) {
     if (sliceH < minSlice) return;
 
     var colorIdx = depth === 0 ? i : rootColorIdx;
-    var factor = 1.0 + depth * 0.22;
     var baseColor = colorForIndex(colorIdx);
-    var color = depth === 0 ? baseColor : adjustColor(baseColor, factor);
+    var color = colorForDepth(baseColor, depth);
 
     // The cell itself
     pRects.push({
@@ -1057,7 +1238,7 @@ function drawPartition() {
     pCtx.fillRect(r.x, r.y, r.w, r.h);
 
     if (r.w > 40 && r.h > 16) {
-      pCtx.fillStyle = '#ffffff';
+      pCtx.fillStyle = primaryTextColor(r.color);
       var fontSize = Math.min(11, Math.max(9, r.h * 0.35));
       pCtx.font = '600 ' + fontSize + 'px Inter, sans-serif';
       pCtx.textAlign = 'center';
@@ -1067,7 +1248,7 @@ function drawPartition() {
       pCtx.fillText(label, r.x + r.w / 2, r.y + r.h / 2 - (r.h > 30 ? 7 : 0));
       if (r.h > 30) {
         pCtx.font = '500 ' + Math.max(8, fontSize - 1) + 'px Inter, sans-serif';
-        pCtx.fillStyle = 'rgba(255,255,255,0.8)';
+        pCtx.fillStyle = secondaryTextColor(r.color);
         pCtx.fillText(fitText(pCtx, fmt(r.node.bytes), maxTextW), r.x + r.w / 2, r.y + r.h / 2 + 8);
       }
     }
@@ -1077,7 +1258,7 @@ function drawPartition() {
   var padS = 12;
   var drawW = w - padS * 2;
   var cW = drawW / (P_MAX_DEPTH + 1);
-  pCtx.strokeStyle = 'rgba(255,255,255,0.5)';
+  pCtx.strokeStyle = cssColor('--canvas-stroke-soft');
   pCtx.lineWidth = 2;
   for (var d = 1; d <= P_MAX_DEPTH; d++) {
     var lx = padS + cW * d;
@@ -1192,9 +1373,8 @@ function buildTreemapRects(node, x, y, w, h, depth, rootColorIdx) {
   var rects = squarify(children, x, y, w, h);
   rects.forEach(function(r, i) {
     var colorIdx = depth === 0 ? i : rootColorIdx;
-    var factor = 1.0 + depth * 0.25;
     var baseColor = colorForIndex(colorIdx);
-    var color = depth === 0 ? baseColor : adjustColor(baseColor, factor);
+    var color = colorForDepth(baseColor, depth);
 
     tRects.push({
       node: r.node, x: r.x, y: r.y, w: r.w, h: r.h,
@@ -1238,9 +1418,15 @@ function drawTreemap() {
     tCtx.roundRect(r.x, r.y, r.w, r.h, rad);
     tCtx.fill();
 
-    tCtx.strokeStyle = r.depth === 0 ? '#ffffff' : 'rgba(255,255,255,0.4)';
+    tCtx.strokeStyle = r.depth === 0 ? cssColor('--canvas-stroke') : cssColor('--canvas-stroke-soft');
     tCtx.lineWidth = r.depth === 0 ? 2 : 1;
     tCtx.stroke();
+
+    var hasNestedChildren = (r.node.children || []).some(function(c) { return c.bytes > 0; });
+    if (hasNestedChildren && r.w > 50 && r.h > 30) {
+      tCtx.fillStyle = cssColor('--canvas-header');
+      tCtx.fillRect(r.x + 1, r.y + 1, Math.max(0, r.w - 2), Math.min(23, r.h - 2));
+    }
 
     if (r.w > 35 && r.h > 20) {
       var maxFontSize = r.depth === 0 ? 13 : 11;
@@ -1249,21 +1435,21 @@ function drawTreemap() {
       tCtx.textAlign = 'left';
       tCtx.textBaseline = 'top';
 
-      var hasNestedChildren = (r.node.children || []).filter(function(c) { return c.bytes > 0; }).length > 0;
       var labelY = r.y + 4;
       var labelX = r.x + 6;
       var maxTextW = r.w - 12;
       var label = fitText(tCtx, r.node.name, maxTextW);
 
-      tCtx.fillStyle = 'rgba(0,0,0,0.15)';
+      var primaryText = primaryTextColor(r.color);
+      tCtx.fillStyle = primaryText === '#ffffff' ? 'rgba(0,0,0,0.18)' : 'rgba(255,255,255,0.35)';
       tCtx.fillText(label, labelX + 0.5, labelY + 0.5);
-      tCtx.fillStyle = '#ffffff';
+      tCtx.fillStyle = primaryText;
       tCtx.fillText(label, labelX, labelY);
 
       if ((!hasNestedChildren || r.w < 60 || r.h < 50) && r.h > 35) {
         var sizeFontSize = Math.max(8, fontSize - 2);
         tCtx.font = '500 ' + sizeFontSize + 'px Inter, sans-serif';
-        tCtx.fillStyle = 'rgba(255,255,255,0.75)';
+        tCtx.fillStyle = secondaryTextColor(r.color);
         tCtx.fillText(fitText(tCtx, fmt(r.node.bytes), maxTextW), labelX, labelY + fontSize + 2);
       }
     }
@@ -1475,6 +1661,7 @@ function uiSearch() {
 // ──────────────────────────────────────────────
 window.addEventListener('load', function() {
   var data = RAW;
+  applyThemePreference(document.documentElement.dataset.themePreference || 'system', false);
 
   // Header meta
   document.getElementById('header-meta').innerHTML =
@@ -1515,7 +1702,7 @@ window.addEventListener('load', function() {
     var pct = Math.max(0.5, (othersBytes / total) * 100);
     var pctLabel = ((othersBytes / total) * 100).toFixed(1);
     var label = pct > 8 ? '<span class="seg-label">Others</span>' : '';
-    html += '<div class="stacked-seg" data-name="Others" data-size="' + fmt(othersBytes) + '" data-pct="' + pctLabel + '" style="width:' + pct + '%;background:#cbd5e1">' + label + '</div>';
+    html += '<div class="stacked-seg" data-name="Others" data-size="' + fmt(othersBytes) + '" data-pct="' + pctLabel + '" style="width:' + pct + '%;background:' + cssColor('--other-color') + '">' + label + '</div>';
   }
   html += '</div></div></div>';
   // Legend below
@@ -1526,14 +1713,19 @@ window.addEventListener('load', function() {
       c.name + ' <span class="stacked-legend-size">' + fmt(c.bytes) + '</span> <span class="stacked-legend-pct">' + pct + '%</span></div>';
   });
   if (othersBytes > 0) {
-    html += '<div class="stacked-legend-item" data-name="Others"><div class="stacked-dot" style="background:#cbd5e1"></div>' +
+    html += '<div class="stacked-legend-item" data-name="Others"><div class="stacked-dot" style="background:' + cssColor('--other-color') + '"></div>' +
       'Others <span class="stacked-legend-size">' + fmt(othersBytes) + '</span> <span class="stacked-legend-pct">' + ((othersBytes / total) * 100).toFixed(1) + '%</span></div>';
   }
   html += '</div>';
   var userPermissionErrors = data.user_permission_errors;
   var systemPermissionErrors = data.system_permission_errors;
+  var scanPermissionErrors = data.scan_permission_errors || 0;
   if (typeof userPermissionErrors !== 'number') userPermissionErrors = data.permission_errors || 0;
   if (typeof systemPermissionErrors !== 'number') systemPermissionErrors = 0;
+  if (scanPermissionErrors > 0) {
+    html += '<div class="scan-warning"><strong>Limited folder scan:</strong> ' + scanPermissionErrors +
+      ' folders in the selected location could not be read.</div>';
+  }
   if (userPermissionErrors > 0) {
     html += '<div class="scan-warning"><strong>Limited user-data scan:</strong> ' + userPermissionErrors +
       ' folders could not be read. Check Full Disk Access and restart the terminal app after enabling it.</div>';

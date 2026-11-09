@@ -120,6 +120,7 @@ All views support:
 - Hover tooltip with name, path, size, and percentage
 - See the full active path beside **Open in Finder**; leaf blocks open directly, while parent blocks drill down and update the path
 - Open the current folder or any folder-table row directly in Finder
+- Persisted **Auto**, **Light**, and **Dark** appearance modes with theme-aware chart palettes
 - Interactive stacked bar and legend (click to drill in)
 
 Sidebar:

@@ -69,11 +69,16 @@ PERMISSION_ERRORS=$(awk '/Operation not permitted|Permission denied/ { count++ }
 if [ "$WHOLE_DRIVE" -eq 1 ]; then
   USER_PERMISSION_ERRORS=$(awk '/Operation not permitted|Permission denied/ && /\/Users\// { count++ } END { print count + 0 }' "$ERR_TMP")
   SYSTEM_PERMISSION_ERRORS=$(( PERMISSION_ERRORS - USER_PERMISSION_ERRORS ))
+  SCAN_PERMISSION_ERRORS=0
 else
-  USER_PERMISSION_ERRORS=$PERMISSION_ERRORS
+  USER_PERMISSION_ERRORS=0
   SYSTEM_PERMISSION_ERRORS=0
+  SCAN_PERMISSION_ERRORS=$PERMISSION_ERRORS
 fi
 
+if [ "$SCAN_PERMISSION_ERRORS" -gt 0 ]; then
+  echo "   ⚠️  $SCAN_PERMISSION_ERRORS folders in the selected location could not be read."
+fi
 if [ "$USER_PERMISSION_ERRORS" -gt 0 ]; then
   echo "   ⚠️  $USER_PERMISSION_ERRORS user-data folders could not be read."
   echo "      Check Full Disk Access for your terminal app and restart the app after enabling it."
@@ -171,6 +176,7 @@ output = {
         "available_bytes": int("$DISK_AVAILABLE_BYTES")
     },
     "permission_errors": int("$PERMISSION_ERRORS"),
+    "scan_permission_errors": int("$SCAN_PERMISSION_ERRORS"),
     "user_permission_errors": int("$USER_PERMISSION_ERRORS"),
     "system_permission_errors": int("$SYSTEM_PERMISSION_ERRORS"),
     "tree": root,
